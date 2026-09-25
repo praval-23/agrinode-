@@ -39,6 +39,21 @@ function readText(record: GovernmentRecord, ...keys: string[]): string | undefin
   return undefined;
 }
 
+function sanitizeDiagnosticText(value: string | undefined): string | null {
+  return value ? value.replace(/\s+/g, ' ').trim().slice(0, 100) : null;
+}
+
+function diagnosticRecord(record: unknown) {
+  if (!record || typeof record !== 'object') return { keys: [], state: null, district: null, market: null };
+  const governmentRecord = record as GovernmentRecord;
+  return {
+    keys: Object.keys(governmentRecord).join('|'),
+    state: sanitizeDiagnosticText(readText(governmentRecord, 'state', 'state_name')),
+    district: sanitizeDiagnosticText(readText(governmentRecord, 'district', 'district_name')),
+    market: sanitizeDiagnosticText(readText(governmentRecord, 'market', 'market_name')),
+  };
+}
+
 function readRequiredText(record: GovernmentRecord, field: string, ...keys: string[]): string {
   const value = readText(record, ...keys);
   if (!value) throw new GovernmentMarketDataError('missing_field', `Government record is missing ${field}`);
@@ -198,6 +213,14 @@ export class GovernmentMarketDataProvider implements MarketDataProvider {
           }
           if (!Array.isArray(payload.records)) throw new GovernmentMarketDataError('invalid_response', 'Government API response did not contain a records array');
           const pageRecords = payload.records.filter((record): record is GovernmentRecord => Boolean(record) && typeof record === 'object');
+          if (process.env.NODE_ENV === 'development') console.info('[market] government payload diagnostics', {
+            payloadRecordsLength: payload.records.length,
+            pageRecordsLength: pageRecords.length,
+            rawRecords: payload.records.slice(0, 3).map(diagnosticRecord),
+            requested: { state: query?.state ?? null, district: scope === 'district' ? query?.district ?? null : null, market: query?.market ?? null },
+            page,
+            offset: page * env.government.limit,
+          });
           if (pageRecords.length === 0 && page === 0) throw new GovernmentMarketDataError('empty_response', 'Government API returned no records');
           records.push(...pageRecords);
           if (pageRecords.length < env.government.limit) break;
