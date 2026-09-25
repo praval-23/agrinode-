@@ -1,0 +1,2 @@
+export type ListingStatus='ACTIVE'|'RESERVED'|'SOLD'|'EXPIRED';
+export type FarmerListing={id:string;farmerId:string;crop:string;grade:string;quantityKg:number;availableQuantityKg?:number;pricePerKg:number;harvestDate:string;location:string;description:string;status:ListingStatus;createdAt:string;verified:boolean;distanceKm:number;qualityScore?:number;qualityConfidence?:number;scanSource?:'gemini'|'mock';dataSource?:'backend'|'local'};

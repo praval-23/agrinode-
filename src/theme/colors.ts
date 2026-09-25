@@ -1,0 +1,1 @@
+export const colors = { green: '#155B3A', greenBright: '#2E8B57', mint: '#E7F3E9', cream: '#F7F6F0', card: '#FFFFFF', ink: '#17231B', muted: '#66756A', line: '#DFE7DF', amber: '#E7A93C', red: '#BF4B42', blue: '#3478C9' };

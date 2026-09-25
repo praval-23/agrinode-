@@ -1,0 +1,1 @@
+export type ShipmentStatus='ASSIGNED'|'PICKUP_PENDING'|'IN_TRANSIT'|'DELIVERED'; export type Shipment={id:string;orderId:string;vehicle:string;driver:string;pickup:string;destination:string;distanceKm:number;loadKg:number;eta:string;status:ShipmentStatus}; export type PaymentSplit={farmerAmount:number;transporterAmount:number;fpoAmount:number;totalAmount:number};

@@ -1,0 +1,6 @@
+export type PriceUnit = 'kg' | 'quintal' | 'tonne' | '100kg' | 'bag';
+export type Demand = 'High' | 'Medium' | 'Low';
+export type MarketPrice = { id:string; name:string; category:string; commodity:string; variety:string; market:string; district:string; state:string; date:string; sourcePrice:number; sourceUnit:PriceUnit; minPrice:number; maxPrice:number; modalPrice:number; normalizedPricePerKg:number; previousPricePerKg:number|null; changePercent:number|null; trend:number[]; demand:Demand|null; source:'Mock'|'Agmarknet'; lastUpdated:string; icon:string; latitude:number|null; longitude:number|null; distanceKm?:number; /** How tightly this record matches the requested location: exact district, same state, or unscoped (mock). */ locationScope?:'district'|'state'|'none' };
+export type MarketHistoryPoint = { date:string; price:number };
+export type MarketHistory = { commodity:string; market:string; currentPrice:number|null; previousPrice:number|null; change:number|null; changePercent:number|null; history:MarketHistoryPoint[]; demand:null; source:'government'|'mock'; locationScope:'district'|'state'|'none' };
+export interface MarketDataProvider { getPrices():Promise<MarketPrice[]>; getPrice(id:string):Promise<MarketPrice|undefined>; }

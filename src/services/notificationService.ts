@@ -1,0 +1,1 @@
+import type { AppNotification } from '@/types/app'; export const createNotification=(type:AppNotification['type'],title:string,message:string):AppNotification=>({id:`NOT-${Date.now()}`,type,title,message,read:false,createdAt:new Date().toISOString()}); export const markRead=(items:AppNotification[],id:string)=>items.map(x=>x.id===id?{...x,read:true}:x);

@@ -1,0 +1,2 @@
+export type OrderStatus='PLACED'|'ACCEPTED'|'PRODUCE_READY'|'PICKUP_ASSIGNED'|'IN_TRANSIT'|'DELIVERED'|'COMPLETED'|'CANCELLED';
+export type Order={id:string;buyerId:string;farmerId:string;listingId:string;crop:string;quantityKg:number;pricePerKg:number;totalAmount:number;status:OrderStatus;createdAt:string;deliveryLocation:string;paymentStatus:'PENDING'|'COMPLETED';transportStatus:'NOT_ASSIGNED'|'ASSIGNED'|'IN_TRANSIT'|'DELIVERED';grade:string};

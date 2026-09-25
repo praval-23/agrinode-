@@ -1,0 +1,7 @@
+import { router } from 'expo-router';
+import { ScrollView, StyleSheet, Text } from 'react-native';
+import { Card, PrimaryButton, SecondaryButton } from '@/components/agri/ui';
+import { colors } from '@/theme/colors';
+import { useApp } from '@/context/AppContext';
+export default function Role() { const {setRole}=useApp(); return <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={s.page}><Text style={s.kicker}>AGRINODE</Text><Text style={s.title}>How will you use AgriNode?</Text><Text style={s.copy}>You can switch roles from your profile at any time.</Text><Card><Text style={s.cardTitle}>Farmer</Text><Text style={s.copy}>List produce, assess quality, view prices and fulfil orders.</Text><PrimaryButton label="Continue as farmer" onPress={() => {setRole('farmer');router.replace('/farmer/dashboard')}} /></Card><Card><Text style={s.cardTitle}>Buyer</Text><Text style={s.copy}>Discover verified produce, place orders and track delivery.</Text><SecondaryButton label="Continue as buyer" onPress={() => {setRole('buyer');router.replace('/buyer/dashboard')}} /></Card></ScrollView>; }
+const s=StyleSheet.create({page:{padding:24,gap:18,backgroundColor:colors.cream},kicker:{fontWeight:'900',letterSpacing:3,color:colors.green},title:{fontSize:31,fontWeight:'900',color:colors.ink},copy:{color:colors.muted,lineHeight:21},cardTitle:{fontSize:22,fontWeight:'800',color:colors.ink}});
