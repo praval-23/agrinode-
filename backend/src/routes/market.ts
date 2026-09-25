@@ -119,8 +119,14 @@ marketRouter.get('/prices', async (request, response, next) => {
       let districtRecords: MarketPrice[] = [];
       let stateRecords: MarketPrice[] = [];
       if (requestedScope === 'district') {
-        const rawDistrict = await governmentProvider.getPrices({ state: stateArg, district: districtArg, market: validatedLocationQuery.market }, { scope: 'district' });
-        districtRecords = rawDistrict.filter((record) => districtScopeMatches(record, district) && stateScopeMatches(record, state));
+        try {
+          const rawDistrict = await governmentProvider.getPrices({ state: stateArg, district: districtArg, market: validatedLocationQuery.market }, { scope: 'district' });
+          districtRecords = rawDistrict.filter((record) => districtScopeMatches(record, district) && stateScopeMatches(record, state));
+        } catch (error) {
+          if (!(error instanceof GovernmentMarketDataError)) throw error;
+          const rawState = await governmentProvider.getPrices({ state: stateArg, market: validatedLocationQuery.market }, { scope: 'state' });
+          stateRecords = rawState.filter((record) => stateScopeMatches(record, state));
+        }
       } else if (requestedScope === 'state') {
         const rawState = await governmentProvider.getPrices({ state: stateArg, market: validatedLocationQuery.market }, { scope: 'state' });
         stateRecords = rawState.filter((record) => stateScopeMatches(record, state));
