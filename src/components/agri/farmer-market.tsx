@@ -7,7 +7,7 @@ import { colors } from "@/theme/colors";
 import type { MarketPrice } from "@/types/market";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppIcon, BottomNavigation, Card, CropVisual, StatusBadge } from "./ui";
 
 const up = {
@@ -183,7 +183,7 @@ function DemandCard({ demand }: { demand: MarketPrice["demand"] }) {
 }
 
 export function FarmerMarket() {
-  const { prices: items, source, locationScope, error, isFallback, loading, retry } = useMarketPrices();
+  const { prices: items, source, locationScope, error, isFallback, loading, refreshing, refresh, retry } = useMarketPrices();
   const { location } = useLocationSelection();
   const { t } = useI18n();
   const scopeNote = locationScope === "district" && location.district
@@ -204,6 +204,7 @@ export function FarmerMarket() {
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={s.page}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.green} colors={[colors.green]} />}
       >
         <View>
           <Text style={s.title}>{t("marketWatchlist")}</Text>

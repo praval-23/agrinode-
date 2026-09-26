@@ -204,4 +204,8 @@ marketRouter.get('/prices', async (request, response, next) => {
   }
 });
 
+marketRouter.use((_request, response) => {
+  response.status(404).json({ error: 'Market endpoint not found' });
+});
+
 export default marketRouter;

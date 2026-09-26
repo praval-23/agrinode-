@@ -2,7 +2,7 @@ import { useLocationSelection } from '@/context/LocationContext';
 import { rankMarkets } from '@/services/marketRanking';
 import { getMarketPricesWithStatus, type MarketDataSource } from '@/services/pricingService';
 import type { MarketPrice } from '@/types/market';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const requests = new Map<string, Promise<Awaited<ReturnType<typeof getMarketPricesWithStatus>>>>();
 
@@ -26,7 +26,9 @@ export function useMarketPrices() {
   const [locationScope, setLocationScope] = useState<'district' | 'state' | 'none' | undefined>(undefined);
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const refreshInFlight = useRef(false);
   const key = locationKey(location);
 
   useEffect(() => {
@@ -54,7 +56,25 @@ export function useMarketPrices() {
     return () => { active = false; };
   }, [key, retryCount]);
 
+  const refresh = async () => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    setRefreshing(true);
+    try {
+      const result = await getSharedMarketPrices(location, true);
+      setPrices(result.prices);
+      setSource(result.source);
+      setLocationScope(result.locationScope);
+      setError(result.error);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Backend request failed');
+    } finally {
+      refreshInFlight.current = false;
+      setRefreshing(false);
+    }
+  };
+
   const rankedPrices = rankMarkets(prices, location);
   if (__DEV__) console.info('[market] final sorted markets for display', rankedPrices.slice(0, 10).map((market) => ({ market: market.market, location: `${market.district}, ${market.state}`, distanceKm: market.distanceKm })));
-  return { prices: rankedPrices, source, locationScope, error, loading, isFallback: source === 'mock' || source === 'mock-fallback', retry: () => setRetryCount((count) => count + 1) };
+  return { prices: rankedPrices, source, locationScope, error, loading, refreshing, refresh, isFallback: source === 'mock' || source === 'mock-fallback', retry: () => setRetryCount((count) => count + 1) };
 }

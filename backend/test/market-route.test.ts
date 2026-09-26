@@ -101,6 +101,14 @@ test('uses district government records without state retry', async () => {
   assert.equal(requestedUrls.length, 1);
 });
 
+test('returns JSON for unmatched market endpoints', async () => {
+  const response = await fetch(`${baseUrl}/api/market/not-a-route`);
+
+  assert.equal(response.status, 404);
+  assert.match(response.headers.get('content-type') ?? '', /application\/json/i);
+  assert.deepEqual(await response.json(), { error: 'Market endpoint not found' });
+});
+
 test('retries state scope when district returns empty_response', async () => {
   const requestedUrls: string[] = [];
   mockGovernmentApi([governmentResponse([]), governmentResponse([governmentRecord({ district: 'Mysuru', market: 'Mysuru APMC', commodity: 'Onion' })])], requestedUrls);
