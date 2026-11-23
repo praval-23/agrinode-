@@ -50,6 +50,8 @@ type AppState = {
   role: AppRole;
   setRole: (role: AppRole) => void;
   listings: FarmerListing[];
+  buyerSelectedListing?: FarmerListing;
+  setBuyerSelectedListing: (listing: FarmerListing | undefined) => void;
   listingsLoading: boolean;
   listingsError?: string;
   refreshListings: () => Promise<void>;
@@ -68,6 +70,7 @@ const Context = createContext<AppState | undefined>(undefined);
 export function AppProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<AppRole>('farmer');
   const [listings, setListings] = useState<FarmerListing[]>(initialListings.map((item) => ({ ...item, dataSource: 'local' as const })));
+  const [buyerSelectedListing, setBuyerSelectedListing] = useState<FarmerListing>();
   const [listingsLoading, setListingsLoading] = useState(true);
   const [listingsError, setListingsError] = useState<string>();
   const [orders, setOrders] = useState(initialOrders);
@@ -116,6 +119,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     role,
     setRole,
     listings,
+    buyerSelectedListing,
+    setBuyerSelectedListing: (listing) => setBuyerSelectedListing(listing),
     listingsLoading,
     listingsError,
     refreshListings,
@@ -159,7 +164,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     notifications,
     markNotificationRead: (id) => setNotifications((all) => all.map((item) => item.id === id ? { ...item, read: true } : item)),
-  }), [role, listings, listingsLoading, listingsError, orders, notifications]);
+  }), [role, listings, buyerSelectedListing, listingsLoading, listingsError, orders, notifications]);
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

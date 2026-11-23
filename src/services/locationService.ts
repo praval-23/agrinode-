@@ -21,20 +21,38 @@ function normalizeLabel(value: string | undefined) {
   return (value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-export function normalizeLocation(city: string, district: string | null | undefined, state: string, latitude: number | null, longitude: number | null, source: LocationSource): UserLocation {
+export function normalizeLocation(
+  city: string,
+  district: string | null | undefined,
+  state: string,
+  latitude: number | null,
+  longitude: number | null,
+  source: LocationSource,
+): UserLocation {
   const normalizedCity = city.trim() || 'Unknown city';
   const normalizedState = state.trim() || 'Unknown state';
+
   const known = getMarketLocation(normalizedCity);
-  const districtMatchesKnownCity = known && (
-    normalizeLabel(known.state) === normalizeLabel(normalizedState)
-    && normalizeLabel(district ?? '') === normalizeLabel(known.district)
-  );
-  const validatedDistrict = source === 'manual'
-    ? district?.trim() || null
-    : districtMatchesKnownCity
-      ? district!.trim()
-      : null;
-  if (__DEV__) console.info('[location] validated location', { city: normalizedCity, district: validatedDistrict, state: normalizedState, latitude, longitude, source });
+
+  // For GPS, trust the district returned by reverse geocoding.
+  // For manual locations, use the supplied district or the known
+  // market-location district as a fallback.
+  const validatedDistrict =
+    source === 'gps'
+      ? district?.trim() || null
+      : district?.trim() || known?.district || null;
+
+  if (__DEV__) {
+    console.info('[location] validated location', {
+      city: normalizedCity,
+      district: validatedDistrict,
+      state: normalizedState,
+      latitude,
+      longitude,
+      source,
+    });
+  }
+
   return {
     city: normalizedCity,
     district: validatedDistrict,
@@ -47,18 +65,52 @@ export function normalizeLocation(city: string, district: string | null | undefi
 
 export async function getCurrentUserLocation(): Promise<UserLocation> {
   const permission = await Location.requestForegroundPermissionsAsync();
-  if (!permission.granted) throw new LocationPermissionError();
-  const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-  const [place] = await Location.reverseGeocodeAsync({ latitude: position.coords.latitude, longitude: position.coords.longitude });
-  if (__DEV__) console.info('[location] raw GPS coordinates', position.coords.latitude, position.coords.longitude);
-  if (__DEV__) console.info('[location] raw reverse-geocoding result', place);
-  const city = place?.city ?? place?.subregion ?? place?.district ?? 'Unknown city';
+
+  if (!permission.granted) {
+    throw new LocationPermissionError();
+  }
+
+  const position = await Location.getCurrentPositionAsync({
+    accuracy: Location.Accuracy.Balanced,
+  });
+
+  const latitude = position.coords.latitude;
+  const longitude = position.coords.longitude;
+
+  if (__DEV__) {
+    console.info('[location] raw GPS coordinates', latitude, longitude);
+  }
+
+  const [place] = await Location.reverseGeocodeAsync({
+    latitude,
+    longitude,
+  });
+
+  if (__DEV__) {
+    console.info('[location] raw reverse-geocoding result', place);
+  }
+
+  const city =
+    place?.city ??
+    place?.subregion ??
+    place?.district ??
+    'Unknown city';
+
+  const district =
+    place?.district ??
+    place?.subregion ??
+    null;
+
+  const state =
+    place?.region ??
+    'Unknown state';
+
   return normalizeLocation(
     city,
-    place?.district ?? place?.subregion ?? '',
-    place?.region ?? 'Unknown state',
-    position.coords.latitude,
-    position.coords.longitude,
+    district,
+    state,
+    latitude,
+    longitude,
     'gps',
   );
 }

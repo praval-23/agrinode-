@@ -1,5 +1,5 @@
-import { createContext, type ReactNode, useContext, useMemo, useState } from 'react';
 import { createManualLocation, demoUserLocation, getCurrentUserLocation, type UserLocation } from '@/services/locationService';
+import { createContext, type ReactNode, useContext, useMemo, useState } from 'react';
 
 type LocationState = {
   location: UserLocation;
@@ -23,7 +23,13 @@ export function LocationProvider({ children }: { children: ReactNode }) {
       setLoading(true);
       setError(undefined);
       try { setLocation(await getCurrentUserLocation()); }
-      catch (reason) { setLocation(demoUserLocation); setError(reason instanceof Error ? reason.message : 'Location unavailable'); }
+      catch (reason) {
+  setError(
+    reason instanceof Error
+      ? reason.message
+      : 'Location unavailable',
+  );
+}
       finally { setLoading(false); }
     },
     setManualLocation: (city, district, state) => { setLocation(createManualLocation(city, district, state)); setError(undefined); },

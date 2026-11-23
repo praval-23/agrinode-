@@ -2,6 +2,7 @@ import express from 'express';
 import commerceRouter from './routes/commerce';
 import healthRouter from './routes/health';
 import marketRouter from './routes/market';
+import ondcRouter from './routes/ondc';
 import scanRouter from './routes/scan';
 
 export const app = express();
@@ -13,6 +14,7 @@ app.use(express.json());
 app.use('/api/health', healthRouter);
 app.use('/api/market', marketRouter);
 app.use('/api/scan', scanRouter);
+app.use('/api/ondc', ondcRouter);
 app.use('/api', commerceRouter);
 
 app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
