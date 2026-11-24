@@ -1,6 +1,6 @@
 export type PriceUnit = 'kg' | 'quintal' | 'tonne' | '100kg' | 'bag';
 export type Demand = 'High' | 'Medium' | 'Low';
-export type MarketQuery = { latitude?: number; longitude?: number; city?: string; district?: string; state?: string; market?: string };
+export type MarketQuery = { latitude?: number; longitude?: number; city?: string; district?: string; state?: string; commodity?: string; market?: string };
 
 export type MarketPrice = {
   id: string;
@@ -13,11 +13,11 @@ export type MarketPrice = {
   state: string;
   date: string;
   sourcePrice: number;
-  sourceUnit: PriceUnit;
+  sourceUnit: PriceUnit | null;
   minPrice: number;
   maxPrice: number;
   modalPrice: number;
-  normalizedPricePerKg: number;
+  normalizedPricePerKg: number | null;
   previousPricePerKg: number | null;
   changePercent: number | null;
   trend: number[];
@@ -30,6 +30,10 @@ export type MarketPrice = {
   distanceKm?: number;
   /** How tightly this record matches the requested location: exact district, same state, or unscoped (mock). */
   locationScope?: 'district' | 'state' | 'none';
+  freshness?: 'fresh' | 'historical';
+  grade?: string;
+  minPricePerKg?: number | null;
+  maxPricePerKg?: number | null;
 };
 
 export type MarketHistoryPoint = { date: string; price: number };

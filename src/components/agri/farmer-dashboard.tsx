@@ -284,11 +284,20 @@ function WatchCard({ item }: { item: MarketPrice }) {
       <Text numberOfLines={1} style={s.cropName}>
         {item.name}
       </Text>
-      <Text style={s.price}>{formatKgPrice(item.normalizedPricePerKg)}</Text>
+      <Text style={s.price}>
+        {item.normalizedPricePerKg === null ? `${formatINR(item.sourcePrice)} · unit unverified` : formatKgPrice(item.normalizedPricePerKg)}
+      </Text>
+      {item.minPricePerKg !== null && item.minPricePerKg !== undefined && item.maxPricePerKg !== null && item.maxPricePerKg !== undefined
+        ? <Text style={s.marketName}>Min ₹{item.minPricePerKg.toFixed(2)}/kg · Max ₹{item.maxPricePerKg.toFixed(2)}/kg</Text>
+        : null}
       <Sparkline trend={item.trend} positive={positive} />
       <Text numberOfLines={1} style={s.marketName}>
-        {item.market} APMC
+        {item.market} · {item.district}, {item.state}
         {item.distanceKm !== undefined ? ` · ${item.distanceKm} km` : ""}
+      </Text>
+      <Text numberOfLines={1} style={s.marketName}>
+        Reported {item.date} · {item.source === "Agmarknet" ? "AGMARKNET government data" : "Demo data"}
+        {item.source === "Agmarknet" ? item.freshness === "historical" ? " · Historical" : " · Recent" : ""}
       </Text>
     </Pressable>
   );

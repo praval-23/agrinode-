@@ -45,10 +45,11 @@ export const env = {
     apiKey: process.env.GOVERNMENT_API_KEY && process.env.GOVERNMENT_API_KEY !== 'REPLACE_WITH_YOUR_DATA_GOV_IN_API_KEY'
       ? process.env.GOVERNMENT_API_KEY.trim()
       : undefined,
-    resourceId: process.env.GOVERNMENT_MARKET_RESOURCE_ID ?? '9ef84268-d588-465a-a308-a864a43d0070',
+    resourceId: process.env.GOVERNMENT_MARKET_RESOURCE_ID?.trim() || '35985678-0d79-46b4-9ed6-6f13308a1d24',
+    priceUnit: process.env.GOVERNMENT_MARKET_PRICE_UNIT?.trim() || undefined,
     limit: Number(process.env.GOVERNMENT_API_LIMIT ?? 100),
-    maxPages: Number(process.env.GOVERNMENT_API_MAX_PAGES ?? 5),
     timeoutMs: Number(process.env.GOVERNMENT_API_TIMEOUT_MS ?? 20000),
+    freshnessDays: Number(process.env.GOVERNMENT_MARKET_FRESHNESS_DAYS ?? 7),
   },
 };
 
@@ -56,8 +57,12 @@ if (!Number.isInteger(env.government.limit) || env.government.limit < 1 || env.g
   throw new Error('GOVERNMENT_API_LIMIT must be an integer between 1 and 1000');
 }
 
-if (!Number.isInteger(env.government.maxPages) || env.government.maxPages < 1 || env.government.maxPages > 20) {
-  throw new Error('GOVERNMENT_API_MAX_PAGES must be an integer between 1 and 20');
+if (env.government.priceUnit && !['kg', 'quintal', 'tonne', '100kg'].includes(env.government.priceUnit)) {
+  throw new Error('GOVERNMENT_MARKET_PRICE_UNIT must be kg, quintal, tonne, or 100kg');
+}
+
+if (!Number.isInteger(env.government.freshnessDays) || env.government.freshnessDays < 1 || env.government.freshnessDays > 90) {
+  throw new Error('GOVERNMENT_MARKET_FRESHNESS_DAYS must be an integer between 1 and 90');
 }
 
 if (!Number.isInteger(env.government.timeoutMs) || env.government.timeoutMs < 1000 || env.government.timeoutMs > 120000) {

@@ -2,7 +2,7 @@ import { useLocationSelection } from "@/context/LocationContext";
 import { useMarketPrices } from "@/hooks/use-market-prices";
 import { useI18n } from "@/i18n";
 import { rankMarkets } from "@/services/marketRanking";
-import { formatKgPrice, getCropPrice, getMarketHistory } from "@/services/pricingService";
+import { formatINR, formatKgPrice, getCropPrice, getMarketHistory } from "@/services/pricingService";
 import { colors } from "@/theme/colors";
 import type { MarketPrice } from "@/types/market";
 import { router, useLocalSearchParams } from "expo-router";
@@ -183,7 +183,7 @@ function DemandCard({ demand }: { demand: MarketPrice["demand"] }) {
 }
 
 export function FarmerMarket() {
-  const { prices: items, source, locationScope, error, isFallback, loading, refreshing, refresh, retry } = useMarketPrices();
+  const { prices: items, source, locationScope, dataQuality, error, isFallback, loading, refreshing, refresh, retry } = useMarketPrices();
   const { location } = useLocationSelection();
   const { t } = useI18n();
   const scopeNote = locationScope === "district" && location.district
@@ -194,9 +194,11 @@ export function FarmerMarket() {
   const marketStatus = loading
     ? "Loading market prices..."
     : isFallback
-      ? `Demo fallback prices · ${error ?? "backend unavailable"}`
+      ? `Demo prices only — not government data · ${error ?? "government service unavailable"}`
+      : source === "unavailable"
+        ? "Government market data is unavailable"
       : source === "government"
-        ? `Government market prices${scopeNote ? ` · ${scopeNote}` : ""}`
+        ? `Government market prices${scopeNote ? ` · ${scopeNote}` : ""}${dataQuality?.latestGuaranteed === false ? " · recent candidates; not guaranteed globally newest" : ""}`
         : "Demo market prices";
   return (
     <View style={s.root}>
@@ -211,7 +213,7 @@ export function FarmerMarket() {
           <Text style={s.location}>{location.city}, {location.state}</Text>
           <Text style={s.sub}>{marketStatus}</Text>
         </View>
-        {loading ? <Text style={s.empty}>Loading government market records...</Text> : error && items.length === 0 ? <View style={s.empty}><Text style={s.emptyText}>{error}</Text><Pressable onPress={retry} style={s.retry}><Text style={s.retryText}>Retry</Text></Pressable></View> : items.length === 0 ? <View style={s.empty}><Text style={s.emptyText}>No government market has a verified location match for this area.</Text><Pressable onPress={retry} style={s.retry}><Text style={s.retryText}>Retry</Text></Pressable></View> : items.map((item) => {
+        {loading ? <Text style={s.empty}>Loading government market records...</Text> : error && items.length === 0 ? <View style={s.empty}><Text style={s.emptyText}>{error}</Text><Pressable onPress={retry} style={s.retry}><Text style={s.retryText}>Retry</Text></Pressable></View> : items.length === 0 ? <View style={s.empty}><Text style={s.emptyText}>{source === "unavailable" ? "No trustworthy government market prices are available right now." : "No government market has a verified location match for this area."}</Text><Pressable onPress={retry} style={s.retry}><Text style={s.retryText}>Retry</Text></Pressable></View> : items.map((item) => {
           if (__DEV__) console.info('[market] displayed market/location', { market: item.market, district: item.district, state: item.state, latitude: item.latitude, longitude: item.longitude, distanceKm: item.distanceKm, userLocation: location });
           const positive = (item.changePercent ?? 0) >= 0;
           return (
@@ -227,18 +229,21 @@ export function FarmerMarket() {
                     <Change value={item.changePercent} />
                   </View>
                   <Text numberOfLines={1} style={s.meta}>
-                    {item.market} APMC · {item.locationScope === "state" ? `${item.state} market · ` : ""}{item.demand ?? "Demand unavailable"}
-                    {item.distanceKm !== undefined
-                      ? ` · ${item.distanceKm} km`
-                      : ""}
-                    {item.locationScope === "state" && item.district ? ` · ${item.district}` : ""}
+                    {item.market} · {item.district}, {item.state} · {item.demand ?? "Demand unavailable"}
+                    {item.locationScope === "state" ? " · statewide fallback" : ""}
+                  </Text>
+                  <Text numberOfLines={1} style={s.meta}>
+                    Reported {item.date} · {item.source === "Mock" ? "Demo observation" : item.freshness === "historical" ? "Historical observation" : "Recent observation"} · {item.source === "Agmarknet" ? "AGMARKNET government data" : "Demo data"}
                   </Text>
                   <View style={s.rowBottom}>
                     <Text style={s.price}>
-                      {formatKgPrice(item.normalizedPricePerKg)}
+                      {item.normalizedPricePerKg === null ? `${formatINR(item.sourcePrice)} · unit unverified` : formatKgPrice(item.normalizedPricePerKg)}
                     </Text>
                     <LineChart data={item.trend} positive={positive} />
                   </View>
+                  {item.minPricePerKg !== null && item.minPricePerKg !== undefined && item.maxPricePerKg !== null && item.maxPricePerKg !== undefined
+                    ? <Text style={s.meta}>Min {formatKgPrice(item.minPricePerKg)} · Max {formatKgPrice(item.maxPricePerKg)}</Text>
+                    : null}
                 </View>
               </Card>
             </Pressable>
@@ -310,18 +315,22 @@ export function MarketDetail() {
           <CropVisual crop={item.name} size={68} />
           <View style={s.flex}>
             <Text style={s.title}>{item.name}</Text>
-            <Text style={s.sub}>{item.market} APMC · {item.source === "Mock" ? "Demo data" : "Government data"}</Text>
+            <Text style={s.sub}>{item.market} · {item.district}, {item.state} · {item.source === "Mock" ? "Demo data" : "AGMARKNET government data"}</Text>
           </View>
         </View>
         <Card style={s.priceCard}>
           <View>
             <Text style={s.overline}>{t("currentMandiPrice")}</Text>
             <Text style={s.bigPrice}>
-              {formatKgPrice(currentPrice)}
+              {currentPrice === null ? `${formatINR(item.sourcePrice)} · unit unverified` : formatKgPrice(currentPrice)}
             </Text>
             <Text style={s.meta}>
-              {t("previousPrice")}: {formatKgPrice(previousPrice)}
+              Reported {item.date} · {item.freshness === "historical" ? "Historical observation" : "Recent observation"}
             </Text>
+            {item.minPricePerKg !== null && item.minPricePerKg !== undefined && item.maxPricePerKg !== null && item.maxPricePerKg !== undefined
+              ? <Text style={s.meta}>Min {formatKgPrice(item.minPricePerKg)} · Max {formatKgPrice(item.maxPricePerKg)}</Text>
+              : null}
+            {previousPrice !== null ? <Text style={s.meta}>{t("previousPrice")}: {formatKgPrice(previousPrice)}</Text> : null}
           </View>
           <Change value={changePercent} />
         </Card>
@@ -373,7 +382,9 @@ export function MarketDetail() {
             />
             <Detail label="District" value={item.district} />
             <Detail label="State" value={item.state} />
-            <Detail label="Source" value={`${item.source} market data`} />
+            <Detail label="Source" value={item.source === "Mock" ? "Demo data (not government data)" : "AGMARKNET government data"} />
+            <Detail label="Raw modal price" value={`${formatINR(item.sourcePrice)} / ${item.sourceUnit ?? "unit unverified"}`} />
+            {item.source === "Agmarknet" ? <Detail label="Date coverage" value="Bounded tail-page candidates; globally newest is not guaranteed" /> : null}
             <Detail label="Last updated" value={item.lastUpdated} />
           </View>
           {item.source === "Mock" ? <View style={s.demoNote}>

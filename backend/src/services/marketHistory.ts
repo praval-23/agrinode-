@@ -9,11 +9,11 @@ function sameMarket(left: MarketPrice, market: string): boolean {
   return left.market.trim().toLowerCase() === market.trim().toLowerCase();
 }
 
-function betterRecord(left: MarketPrice, right: MarketPrice): MarketPrice {
+function betterRecord<T extends MarketPrice>(left: T, right: T): T {
   const leftDate = parseArrivalDate(left.date) ?? Number.NEGATIVE_INFINITY;
   const rightDate = parseArrivalDate(right.date) ?? Number.NEGATIVE_INFINITY;
-  if (left.normalizedPricePerKg > 0 && right.normalizedPricePerKg <= 0) return left;
-  if (right.normalizedPricePerKg > 0 && left.normalizedPricePerKg <= 0) return right;
+  if (left.normalizedPricePerKg !== null && left.normalizedPricePerKg > 0 && (right.normalizedPricePerKg === null || right.normalizedPricePerKg <= 0)) return left;
+  if (right.normalizedPricePerKg !== null && right.normalizedPricePerKg > 0 && (left.normalizedPricePerKg === null || left.normalizedPricePerKg <= 0)) return right;
   return leftDate >= rightDate ? left : right;
 }
 
@@ -25,8 +25,13 @@ export function buildMarketHistory(records: MarketPrice[], options: {
   source: MarketHistory['source'];
 }): MarketHistory {
   const commodity = commodityKey(options.commodity);
-  const matching = records.filter((record) => commodityKey(record.commodity) === commodity && (!options.market || sameMarket(record, options.market)) && record.normalizedPricePerKg > 0 && parseArrivalDate(record.date) !== null);
-  const byDate = new Map<string, MarketPrice>();
+  const matching = records.filter((record): record is MarketPrice & { normalizedPricePerKg: number } =>
+    commodityKey(record.commodity) === commodity
+    && (!options.market || sameMarket(record, options.market))
+    && record.normalizedPricePerKg !== null
+    && record.normalizedPricePerKg > 0
+    && parseArrivalDate(record.date) !== null);
+  const byDate = new Map<string, (typeof matching)[number]>();
   for (const record of matching) {
     const existing = byDate.get(record.date);
     byDate.set(record.date, existing ? betterRecord(existing, record) : record);

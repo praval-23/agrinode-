@@ -30,15 +30,27 @@ export function parseArrivalDate(value: string): number | null {
   const trimmed = value.trim();
   const dayMonthYear = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (dayMonthYear) {
-    const time = Date.UTC(Number(dayMonthYear[3]), Number(dayMonthYear[2]) - 1, Number(dayMonthYear[1]));
-    return Number.isFinite(time) ? time : null;
+    return validUtcDate(Number(dayMonthYear[3]), Number(dayMonthYear[2]), Number(dayMonthYear[1]));
   }
   const iso = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (iso) {
-    const time = Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
-    return Number.isFinite(time) ? time : null;
+    return validUtcDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
   }
   return null;
+}
+
+function validUtcDate(year: number, month: number, day: number): number | null {
+  const time = Date.UTC(year, month - 1, day);
+  const date = new Date(time);
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+    ? time
+    : null;
+}
+
+export function normalizeMarketDistrict(value: string): string {
+  const district = value.trim().toLowerCase().replace(/\s+urban$/, '');
+  if (district === 'bangalore' || district === 'bengaluru') return 'bengaluru';
+  return district;
 }
 
 /** Lower is better: 0 = market named after the user's city, 1 = their district, 2 = other. */
@@ -50,8 +62,8 @@ export function marketPreferenceScore(market: string, city?: string, district?: 
 }
 
 function compareCandidates(left: MarketPrice, right: MarketPrice, city?: string, district?: string): number {
-  const leftValidPrice = left.normalizedPricePerKg > 0 ? 0 : 1;
-  const rightValidPrice = right.normalizedPricePerKg > 0 ? 0 : 1;
+  const leftValidPrice = left.normalizedPricePerKg !== null && left.normalizedPricePerKg > 0 ? 0 : 1;
+  const rightValidPrice = right.normalizedPricePerKg !== null && right.normalizedPricePerKg > 0 ? 0 : 1;
   if (leftValidPrice !== rightValidPrice) return leftValidPrice - rightValidPrice;
   const leftDate = parseArrivalDate(left.date) ?? Number.NEGATIVE_INFINITY;
   const rightDate = parseArrivalDate(right.date) ?? Number.NEGATIVE_INFINITY;

@@ -24,6 +24,7 @@ export function useMarketPrices() {
   const [prices, setPrices] = useState<MarketPrice[]>([]);
   const [source, setSource] = useState<MarketDataSource>('mock');
   const [locationScope, setLocationScope] = useState<'district' | 'state' | 'none' | undefined>(undefined);
+  const [dataQuality, setDataQuality] = useState<Awaited<ReturnType<typeof getMarketPricesWithStatus>>['dataQuality']>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -41,6 +42,7 @@ export function useMarketPrices() {
         setPrices(result.prices);
         setSource(result.source);
         setLocationScope(result.locationScope);
+        setDataQuality(result.dataQuality);
         setError(result.error);
         if (__DEV__) console.info('[market] state update', 'source', result.source, 'location scope', result.locationScope ?? 'unknown', 'record count', result.prices.length);
       })
@@ -65,6 +67,7 @@ export function useMarketPrices() {
       setPrices(result.prices);
       setSource(result.source);
       setLocationScope(result.locationScope);
+      setDataQuality(result.dataQuality);
       setError(result.error);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Backend request failed');
@@ -76,5 +79,5 @@ export function useMarketPrices() {
 
   const rankedPrices = rankMarkets(prices, location);
   if (__DEV__) console.info('[market] final sorted markets for display', rankedPrices.slice(0, 10).map((market) => ({ market: market.market, location: `${market.district}, ${market.state}`, distanceKm: market.distanceKm })));
-  return { prices: rankedPrices, source, locationScope, error, loading, refreshing, refresh, isFallback: source === 'mock' || source === 'mock-fallback', retry: () => setRetryCount((count) => count + 1) };
+  return { prices: rankedPrices, source, locationScope, dataQuality, error, loading, refreshing, refresh, isFallback: source === 'mock' || source === 'mock-fallback', retry: () => setRetryCount((count) => count + 1) };
 }
