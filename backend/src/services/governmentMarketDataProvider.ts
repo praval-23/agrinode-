@@ -4,7 +4,12 @@ import { parseArrivalDate } from './marketDiversification';
 
 type GovernmentRecord = Record<string, unknown>;
 type GovernmentResponse = { total?: unknown; records?: unknown };
-type GovernmentPage = { total: number; records: GovernmentRecord[] };
+type GovernmentPage = {
+  total: number;
+  records: GovernmentRecord[];
+  returnedRecordCount: number;
+  rejectedRecordShapeCount: number;
+};
 
 const cache = new Map<string, { expiresAt: number; promise: Promise<MarketPrice[]> }>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -14,10 +19,111 @@ export class GovernmentMarketDataError extends Error {
   constructor(
     public readonly kind: 'configuration' | 'timeout' | 'authentication' | 'rate_limit' | 'invalid_response' | 'request',
     message: string,
+    options?: { cause?: unknown },
   ) {
-    super(message);
+    super(message, options);
     this.name = 'GovernmentMarketDataError';
   }
+}
+
+export function sanitizeGovernmentDiagnosticText(value: string): string {
+  let sanitized = value.replace(/[\r\n\t]+/g, ' ').trim();
+  const apiKey = env.government.apiKey;
+  if (apiKey) sanitized = sanitized.replace(new RegExp(apiKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '[REDACTED]');
+  sanitized = sanitized
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(/((?:api[-_]?key|authorization|access[-_]?token|token|password)=)[^&\s]+/gi, '$1[REDACTED]')
+    .replace(/https?:\/\/[^\s"'<>]+/gi, (candidate) => {
+      try {
+        const url = new URL(candidate);
+        return `${url.protocol}//${url.hostname}${url.port ? `:${url.port}` : ''}${url.pathname}`;
+      } catch {
+        return '[REDACTED_URL]';
+      }
+    });
+  return sanitized.slice(0, 500);
+}
+
+export function governmentDiagnosticError(error: unknown) {
+  const causes: Array<{ name: string; code: string | null; message: string }> = [];
+  let current: unknown = error;
+  let depth = 0;
+  while (current && typeof current === 'object' && depth < 5) {
+    const item = current as { name?: unknown; code?: unknown; message?: unknown; cause?: unknown };
+    const cause = item.cause;
+    if (depth > 0) {
+      causes.push({
+        name: typeof item.name === 'string' ? sanitizeGovernmentDiagnosticText(item.name) : 'Error',
+        code: typeof item.code === 'string' || typeof item.code === 'number' ? sanitizeGovernmentDiagnosticText(String(item.code)) : null,
+        message: typeof item.message === 'string' ? sanitizeGovernmentDiagnosticText(item.message) : 'No error message',
+      });
+    }
+    current = cause;
+    depth += 1;
+  }
+  const root = error && typeof error === 'object'
+    ? error as { name?: unknown; code?: unknown; message?: unknown }
+    : undefined;
+  const codes = [root?.code, ...causes.map((cause) => cause.code)].filter((code): code is string | number => typeof code === 'string' || typeof code === 'number');
+  const messages = [root?.message, ...causes.map((cause) => cause.message)].filter((message): message is string => typeof message === 'string');
+  const codeText = codes.map(String).join(' ').toUpperCase();
+  const messageText = messages.join(' ').toLowerCase();
+  let transportCategory: 'timeout' | 'dns' | 'tls' | 'connection' | null = null;
+  if (codeText.includes('TIMEOUT') || error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')
+    || messageText.includes('timed out') || messageText.includes('timeout')) {
+    transportCategory = 'timeout';
+  } else if (/\b(ENOTFOUND|EAI_AGAIN|EAI_FAIL)\b/.test(codeText) || messageText.includes('getaddrinfo')) {
+    transportCategory = 'dns';
+  } else if (/TLS|CERT|SSL|UNABLE_TO_VERIFY/.test(codeText) || /tls|certificate|ssl handshake/.test(messageText)) {
+    transportCategory = 'tls';
+  } else if (/ECONN|SOCKET|UND_ERR_CONNECT/.test(codeText) || /connection|socket|network/.test(messageText)) {
+    transportCategory = 'connection';
+  }
+
+  return {
+    errorName: root && typeof root.name === 'string' ? sanitizeGovernmentDiagnosticText(root.name) : 'Error',
+    errorCode: root && (typeof root.code === 'string' || typeof root.code === 'number')
+      ? sanitizeGovernmentDiagnosticText(String(root.code))
+      : null,
+    errorMessage: root && typeof root.message === 'string' ? sanitizeGovernmentDiagnosticText(root.message) : sanitizeGovernmentDiagnosticText(String(error)),
+    nestedErrorCause: causes,
+    transportCategory,
+  };
+}
+
+function requestDiagnostics(query: MarketQuery | undefined, scope: 'district' | 'state') {
+  let apiHostname: string | null = null;
+  let endpointPath: string | null = null;
+  try {
+    const baseUrl = new URL(env.government.apiBaseUrl);
+    apiHostname = baseUrl.hostname;
+    endpointPath = `${baseUrl.pathname.replace(/\/+$/, '')}/${encodeURIComponent(env.government.resourceId)}`;
+  } catch {
+    // The failed URL construction is logged by the request handler with the remaining safe context.
+  }
+  const filters: Record<string, string> = {};
+  if (query?.state) filters.State = query.state;
+  if (scope === 'district' && query?.district) filters.District = governmentDistrictName(query.district);
+  if (query?.commodity) filters.Commodity = query.commodity;
+  if (query?.market) filters.Market = query.market;
+  return {
+    resourceId: sanitizeGovernmentDiagnosticText(env.government.resourceId),
+    apiHostname: apiHostname ? sanitizeGovernmentDiagnosticText(apiHostname) : null,
+    endpointPath: endpointPath ? sanitizeGovernmentDiagnosticText(endpointPath) : null,
+    apiKeyConfigured: Boolean(env.government.apiKey),
+    filters: Object.fromEntries(Object.entries(filters).map(([field, value]) => [field, sanitizeGovernmentDiagnosticText(value)])),
+  };
+}
+
+function apiResponseDiagnostics(payload: unknown): { apiStatus: string | number | null; apiMessage: string | null } {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { apiStatus: null, apiMessage: null };
+  const response = payload as Record<string, unknown>;
+  const status = response.status;
+  const message = response.message;
+  return {
+    apiStatus: typeof status === 'string' || typeof status === 'number' ? sanitizeGovernmentDiagnosticText(String(status)) : null,
+    apiMessage: typeof message === 'string' || typeof message === 'number' ? sanitizeGovernmentDiagnosticText(String(message)) : null,
+  };
 }
 
 function normalizedKey(value: string): string {
@@ -68,12 +174,6 @@ export function buildGovernmentRequestUrl(
   if (query?.commodity) params.set('filters[Commodity]', query.commodity);
   if (query?.market) params.set('filters[Market]', query.market);
   url.search = params.toString();
-  return url.toString();
-}
-
-function urlForDiagnostics(requestUrl: string): string {
-  const url = new URL(requestUrl);
-  url.searchParams.delete('api-key');
   return url.toString();
 }
 
@@ -220,8 +320,27 @@ export class GovernmentMarketDataProvider implements MarketDataProvider {
   }
 
   async getPrices(query?: MarketQuery, options?: { scope: 'district' | 'state' }): Promise<MarketPrice[]> {
-    requiredApiKey();
     const scope = options?.scope ?? 'state';
+    try {
+      requiredApiKey();
+    } catch (error) {
+      const diagnostics = requestDiagnostics(query, scope);
+      console.error('[market] government API request failed', {
+        ...diagnostics,
+        limit: env.government.limit,
+        offset: 0,
+        httpStatus: null,
+        requestDurationMs: 0,
+        apiStatus: null,
+        apiMessage: null,
+        totalRecords: null,
+        returnedRecordCount: null,
+        rejectedDuringNormalization: 0,
+        reason: 'api_key_not_configured',
+        ...governmentDiagnosticError(error),
+      });
+      throw error;
+    }
     const cacheKey = JSON.stringify({
       resource: env.government.resourceId,
       scope,
@@ -248,18 +367,50 @@ export class GovernmentMarketDataProvider implements MarketDataProvider {
   }
 
   private async requestPage(query: MarketQuery | undefined, scope: 'district' | 'state', limit: number, offset: number): Promise<GovernmentPage> {
-    const requestUrl = buildGovernmentRequestUrl(query, scope, limit, offset);
     const startedAt = Date.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), env.government.timeoutMs);
+    const diagnostics = requestDiagnostics(query, scope);
+    let responseStatus: number | null = null;
+    let apiStatus: string | number | null = null;
+    let apiMessage: string | null = null;
+    let totalRecords: number | null = null;
+    let returnedRecordCount: number | null = null;
+    let rejectedRecordShapeCount = 0;
+    const logRequest = (result: 'success' | 'failure', reason?: string, error?: unknown) => {
+      const log = result === 'success' ? console.info : console.error;
+      log('[market] government API request', {
+        ...diagnostics,
+        limit,
+        offset,
+        httpStatus: responseStatus,
+        requestDurationMs: Date.now() - startedAt,
+        apiStatus,
+        apiMessage,
+        totalRecords,
+        returnedRecordCount,
+        rejectedRecordShapeCount,
+        rejectedDuringNormalization: 0,
+        result,
+        reason: reason ?? null,
+        ...(error === undefined ? {} : governmentDiagnosticError(error)),
+      });
+    };
     try {
+      const requestUrl = buildGovernmentRequestUrl(query, scope, limit, offset);
       const response = await fetch(requestUrl, { signal: controller.signal });
-      if (process.env.NODE_ENV !== 'production') {
-        console.info('[market] government API response', {
-          url: urlForDiagnostics(requestUrl),
-          status: response.status,
-          responseTimeMs: Date.now() - startedAt,
-        });
+      responseStatus = response.status;
+      if (!response.ok) {
+        try {
+          const errorPayload: unknown = await response.clone().json();
+          ({ apiStatus, apiMessage } = apiResponseDiagnostics(errorPayload));
+          if (errorPayload && typeof errorPayload === 'object' && !Array.isArray(errorPayload)) {
+            const total = (errorPayload as GovernmentResponse).total;
+            if (total !== undefined) totalRecords = parseTotal(total);
+          }
+        } catch {
+          // Non-JSON HTTP error bodies are represented by their HTTP status and sanitized error below.
+        }
       }
       if (response.status === 401 || response.status === 403) {
         throw new GovernmentMarketDataError('authentication', `Government API authentication failed (${response.status})`);
@@ -272,22 +423,33 @@ export class GovernmentMarketDataProvider implements MarketDataProvider {
         const parsed: unknown = await response.json();
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
         payload = parsed as GovernmentResponse;
-      } catch {
-        throw new GovernmentMarketDataError('invalid_response', 'Government API returned invalid JSON');
+        ({ apiStatus, apiMessage } = apiResponseDiagnostics(parsed));
+      } catch (error) {
+        throw new GovernmentMarketDataError('invalid_response', 'Government API returned invalid JSON', { cause: error });
       }
       if (!Array.isArray(payload.records)) {
         throw new GovernmentMarketDataError('invalid_response', 'Government API response did not contain a records array');
       }
       const total = parseTotal(payload.total);
+      totalRecords = total;
+      returnedRecordCount = payload.records.length;
       const records = payload.records.filter((record): record is GovernmentRecord =>
         Boolean(record) && typeof record === 'object' && !Array.isArray(record));
-      return { total, records };
+      rejectedRecordShapeCount = payload.records.length - records.length;
+      logRequest('success');
+      return { total, records, returnedRecordCount: payload.records.length, rejectedRecordShapeCount };
     } catch (error) {
-      if (error instanceof GovernmentMarketDataError) throw error;
-      if ((error instanceof Error && error.name === 'AbortError') || (error instanceof DOMException && error.name === 'AbortError')) {
-        throw new GovernmentMarketDataError('timeout', `Government API timed out after ${env.government.timeoutMs}ms`);
+      let reportedError = error;
+      if (!(error instanceof GovernmentMarketDataError)) {
+        if ((error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError'))
+          || (error instanceof DOMException && error.name === 'AbortError')) {
+          reportedError = new GovernmentMarketDataError('timeout', `Government API timed out after ${env.government.timeoutMs}ms`, { cause: error });
+        } else {
+          reportedError = new GovernmentMarketDataError('request', 'Government API connection failed', { cause: error });
+        }
       }
-      throw new GovernmentMarketDataError('request', 'Government API connection failed');
+      logRequest('failure', reportedError instanceof GovernmentMarketDataError ? reportedError.kind : 'request_failed', reportedError);
+      throw reportedError;
     } finally {
       clearTimeout(timeout);
     }
@@ -297,7 +459,13 @@ export class GovernmentMarketDataProvider implements MarketDataProvider {
     const candidateLimit = env.government.limit;
     const probe = await this.requestPage(query, scope, 1, 0);
     if (probe.total === 0) {
-      if (process.env.NODE_ENV !== 'production') console.info('[market] government API returned an empty filtered dataset', { scope });
+      console.warn('[market] government provider returned no records', {
+        ...requestDiagnostics(query, scope),
+        reason: 'upstream_total_is_zero',
+        totalRecords: probe.total,
+        returnedRecordCount: probe.returnedRecordCount,
+        rejectedDuringNormalization: probe.rejectedRecordShapeCount,
+      });
       return [];
     }
 
@@ -309,22 +477,30 @@ export class GovernmentMarketDataProvider implements MarketDataProvider {
     }
 
     const prices: MarketPrice[] = [];
-    let skippedMalformed = page.records.length === 0 && page.total > 0 ? 1 : 0;
+    let skippedMalformed = page.rejectedRecordShapeCount;
+    const normalizationRejections: Record<string, number> = {};
     for (const record of page.records) {
       try {
         prices.push(toMarketPrice(record));
-      } catch {
+      } catch (error) {
         skippedMalformed += 1;
+        const reason = error instanceof GovernmentMarketDataError ? error.message : 'Unexpected normalization error';
+        normalizationRejections[sanitizeGovernmentDiagnosticText(reason)] = (normalizationRejections[sanitizeGovernmentDiagnosticText(reason)] ?? 0) + 1;
       }
     }
     if (page.records.length > 0 && prices.length === 0) {
-      console.warn('[market] government API candidate page contained no valid market records', {
-        source: 'government',
-        resourceId: env.government.resourceId,
+      const error = new GovernmentMarketDataError('invalid_response', 'Government API returned no valid market records');
+      console.error('[market] government provider returned no records', {
+        ...requestDiagnostics(query, scope),
+        reason: 'all_candidate_records_rejected_during_normalization',
         candidateCount: page.records.length,
-        skippedMalformed,
+        totalRecords: page.total,
+        returnedRecordCount: page.returnedRecordCount,
+        rejectedDuringNormalization: skippedMalformed,
+        normalizationRejections,
+        ...governmentDiagnosticError(error),
       });
-      throw new GovernmentMarketDataError('invalid_response', 'Government API returned no valid market records');
+      throw error;
     }
 
     const unique = new Map<string, MarketPrice>();
@@ -335,21 +511,25 @@ export class GovernmentMarketDataProvider implements MarketDataProvider {
     }
     const sorted = [...unique.values()].sort((left, right) =>
       (parseArrivalDate(right.date) ?? 0) - (parseArrivalDate(left.date) ?? 0));
-    if (process.env.NODE_ENV !== 'production') {
-      console.info('[market] government provider result', {
-        source: 'government',
-        fallback: false,
-        resourceId: env.government.resourceId,
-        candidateCount: page.records.length,
-        recordCount: sorted.length,
-        skippedMalformed,
-        offset,
-        total: page.total,
-        latestArrivalDate: sorted[0]?.date ?? null,
-        latestGuaranteed: false,
-        unitVerified: sorted.every((record) => record.sourceUnit !== null),
-      });
-    }
+    console.info('[market] government provider result', {
+      ...requestDiagnostics(query, scope),
+      reason: sorted.length > 0
+        ? 'records_normalized'
+        : page.returnedRecordCount === 0 && page.total > 0
+          ? 'upstream_page_returned_no_records_with_nonzero_total'
+          : 'no_records_after_normalization',
+      offset,
+      limit: candidateLimit,
+      totalRecords: page.total,
+      returnedRecordCount: page.returnedRecordCount,
+      candidateRecordCount: page.records.length,
+      normalizedRecordCount: sorted.length,
+      rejectedDuringNormalization: skippedMalformed,
+      normalizationRejections,
+      latestArrivalDate: sorted[0]?.date ?? null,
+      latestGuaranteed: false,
+      unitVerified: sorted.every((record) => record.sourceUnit !== null),
+    });
     return sorted;
   }
 

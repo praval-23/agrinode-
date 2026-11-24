@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import { env } from '../config/env';
 import { getMarketLocation } from '../data/marketLocations';
-import { GovernmentMarketDataError, GovernmentMarketDataProvider } from '../services/governmentMarketDataProvider';
+import {
+  GovernmentMarketDataError,
+  GovernmentMarketDataProvider,
+  governmentDiagnosticError,
+  sanitizeGovernmentDiagnosticText,
+} from '../services/governmentMarketDataProvider';
 import { MockMarketDataProvider } from '../services/marketDataProvider';
 import { diversifyByCommodity, normalizeMarketDistrict, parseArrivalDate } from '../services/marketDiversification';
 import { buildMarketHistory } from '../services/marketHistory';
@@ -62,6 +67,22 @@ marketRouter.get('/history', async (request, response, next) => {
 
 function locationSummary(location: { latitude?: number; longitude?: number; city?: string; district?: string; state?: string }) {
   return { latitude: location.latitude ?? null, longitude: location.longitude ?? null, city: location.city ?? null, district: location.district ?? null, state: location.state ?? null };
+}
+
+function logGovernmentRouteFailure(
+  reason: string,
+  filters: Record<string, string | undefined>,
+  error?: unknown,
+  details: Record<string, unknown> = {},
+) {
+  console.error('[market] government route diagnostic', {
+    reason,
+    requestedFilters: Object.fromEntries(Object.entries(filters)
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+      .map(([field, value]) => [field, sanitizeGovernmentDiagnosticText(value)])),
+    ...details,
+    ...(error === undefined ? {} : governmentDiagnosticError(error)),
+  });
 }
 
 /** Records whose state must match before they may be shown for a state-scoped request. */
@@ -137,6 +158,7 @@ marketRouter.get('/prices', async (request, response, next) => {
       const districtArg = validatedLocationQuery.district;
       let districtRecords: MarketPrice[] = [];
       let stateRecords: MarketPrice[] = [];
+      let districtCandidateCount = 0;
       if (requestedScope === 'district') {
         let districtCandidates: MarketPrice[] = [];
         try {
@@ -148,8 +170,15 @@ marketRouter.get('/prices', async (request, response, next) => {
           }, { scope: 'district' });
           districtCandidates = rawDistrict.filter((record) => districtScopeMatches(record, district) && stateScopeMatches(record, state));
         } catch (error) {
+          logGovernmentRouteFailure('district_request_failed_and_state_retry_will_be_attempted', {
+            State: stateArg,
+            District: districtArg,
+            Commodity: validatedLocationQuery.commodity,
+            Market: validatedLocationQuery.market,
+          }, error, { requestedScope });
           if (!(error instanceof GovernmentMarketDataError)) throw error;
         }
+        districtCandidateCount = districtCandidates.length;
         districtRecords = districtCandidates.filter(isFreshRecord);
         if (districtRecords.length === 0) {
           try {
@@ -160,8 +189,21 @@ marketRouter.get('/prices', async (request, response, next) => {
             }, { scope: 'state' });
             stateRecords = rawState.filter((record) => stateScopeMatches(record, state));
           } catch (error) {
+            logGovernmentRouteFailure('state_retry_failed_after_district_request', {
+              State: stateArg,
+              Commodity: validatedLocationQuery.commodity,
+              Market: validatedLocationQuery.market,
+            }, error, {
+              requestedScope,
+              districtCandidateCount,
+              freshDistrictRecordCount: districtRecords.length,
+            });
             if (!(error instanceof GovernmentMarketDataError) || districtCandidates.length === 0) throw error;
-            console.warn('[market] state fallback unavailable; retaining explicitly historical district records', { errorClass: error.kind });
+            console.warn('[market] state retry unavailable; retaining district candidates', {
+              reason: 'state_retry_failed_and_district_candidates_exist',
+              districtCandidateCount,
+              errorKind: error.kind,
+            });
           }
           if (stateRecords.length === 0) districtRecords = districtCandidates;
         }
@@ -226,6 +268,19 @@ marketRouter.get('/prices', async (request, response, next) => {
         return;
       }
       if (!env.marketDataFallbackEnabled) {
+        logGovernmentRouteFailure('no_location_records_matched_and_mock_fallback_is_disabled', {
+          State: stateArg,
+          District: districtArg,
+          Commodity: validatedLocationQuery.commodity,
+          Market: validatedLocationQuery.market,
+        }, undefined, {
+          requestedScope,
+          districtCandidateCount,
+          freshDistrictRecordCount: districtRecords.length,
+          stateRecordCount: stateRecords.length,
+          selectedRecordCount: selection.selected.length,
+          fallbackEnabled: false,
+        });
         response.setHeader('X-Market-Data-Source', 'unavailable');
         response.setHeader('X-Market-Data-Fallback', 'false');
         response.setHeader('X-Market-Data-Location-Scope', 'none');
@@ -243,6 +298,19 @@ marketRouter.get('/prices', async (request, response, next) => {
         });
         return;
       }
+      logGovernmentRouteFailure('no_location_records_matched_mock_fallback_will_be_used', {
+        State: stateArg,
+        District: districtArg,
+        Commodity: validatedLocationQuery.commodity,
+        Market: validatedLocationQuery.market,
+      }, undefined, {
+        requestedScope,
+        districtCandidateCount,
+        freshDistrictRecordCount: districtRecords.length,
+        stateRecordCount: stateRecords.length,
+        selectedRecordCount: selection.selected.length,
+        fallbackEnabled: true,
+      });
       const fallback = (await mockProvider.getPrices()).filter(matchesFilters);
       response.setHeader('X-Market-Data-Source', 'mock-fallback');
       response.setHeader('X-Market-Data-Fallback', 'true');
@@ -260,6 +328,13 @@ marketRouter.get('/prices', async (request, response, next) => {
     } catch (error) {
       if (env.marketDataProvider !== 'government') throw error;
       const errorClass = error instanceof GovernmentMarketDataError ? error.kind : 'request';
+      logGovernmentRouteFailure('government_provider_error_converted_to_unavailable_or_fallback', {
+        State: validatedLocationQuery.state,
+        District: validatedLocationQuery.district,
+        City: validatedLocationQuery.city,
+        Commodity: validatedLocationQuery.commodity,
+        Market: validatedLocationQuery.market,
+      }, error, { errorClass, fallbackEnabled: env.marketDataFallbackEnabled });
       if (!env.marketDataFallbackEnabled) {
         response.setHeader('X-Market-Data-Source', 'unavailable');
         response.setHeader('X-Market-Data-Fallback', 'false');

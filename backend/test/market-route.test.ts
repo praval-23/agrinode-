@@ -194,16 +194,26 @@ test('returns an unavailable response instead of mock data when fallback is disa
 
 test('reports an empty government dataset as unavailable when mock fallback is disabled', async () => {
   const requestedUrls: string[] = [];
+  const errors: unknown[][] = [];
+  const originalConsoleError = console.error;
   env.marketDataFallbackEnabled = false;
   mockGovernmentApi([governmentResponse([], 0), governmentResponse([], 0)], requestedUrls);
 
-  const result = await request();
+  console.error = (...args: unknown[]) => { errors.push(args); };
+  let result: Awaited<ReturnType<typeof request>>;
+  try {
+    result = await request();
+  } finally {
+    console.error = originalConsoleError;
+  }
 
   assert.equal(result.response.status, 200);
   assert.equal(result.body.source, 'unavailable');
   assert.equal(result.body.fallback, false);
   assert.equal(result.body.records.length, 0);
   assert.equal(header(result.response.headers, 'x-market-data-source'), 'unavailable');
+  assert.equal(errors.some((entry) => entry[0] === '[market] government route diagnostic'
+    && (entry[1] as Record<string, unknown>).reason === 'no_location_records_matched_and_mock_fallback_is_disabled'), true);
 });
 
 test('uses state records when district candidates are stale and reports the bounded-tail limitation', async () => {

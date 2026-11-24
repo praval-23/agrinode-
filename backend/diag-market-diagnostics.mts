@@ -1,7 +1,11 @@
 // Safe upstream check for Render Shell or local development.
 // Run from the repository root with: npx tsx backend/diag-market-diagnostics.mts
 import { env } from './src/config/env';
-import { calculateTailOffset } from './src/services/governmentMarketDataProvider';
+import {
+  calculateTailOffset,
+  governmentDiagnosticError,
+  sanitizeGovernmentDiagnosticText,
+} from './src/services/governmentMarketDataProvider';
 import { parseArrivalDate } from './src/services/marketDiversification';
 
 type Payload = { total?: unknown; records?: unknown };
@@ -22,7 +26,12 @@ async function main() {
   console.log('Configured provider:', env.marketDataProvider);
   console.log('Configured resource ID:', env.government.resourceId);
   console.log('New resource selected:', env.government.resourceId === '35985678-0d79-46b4-9ed6-6f13308a1d24');
-  console.log('Configured API host:', new URL(env.government.apiBaseUrl).host);
+  const apiBase = new URL(env.government.apiBaseUrl);
+  console.log('API endpoint:', JSON.stringify({
+    hostname: apiBase.hostname,
+    endpointPath: `${apiBase.pathname.replace(/\/+$/, '')}/${encodeURIComponent(env.government.resourceId)}`,
+  }));
+  console.log('API key configured:', Boolean(env.government.apiKey));
   if (env.marketDataProvider !== 'government') throw new Error('MARKET_DATA_PROVIDER is not government');
   if (!env.government.apiKey) throw new Error('GOVERNMENT_API_KEY is not configured');
 
@@ -38,31 +47,82 @@ async function main() {
     for (const [field, value] of Object.entries(filters)) params.set(`filters[${field}]`, value);
     url.search = params.toString();
     const startedAt = Date.now();
+    let httpStatus: number | null = null;
+    let apiStatus: string | number | null = null;
+    let apiMessage: string | null = null;
+    let totalRecords: number | null = null;
+    let returnedRecordCount: number | null = null;
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(env.government.timeoutMs) });
-      const responseTimeMs = Date.now() - startedAt;
-      console.log('Upstream HTTP status:', response.status, '| response time:', `${responseTimeMs}ms`);
-      if (!response.ok) throw new Error(`Upstream returned HTTP ${response.status}`);
+      httpStatus = response.status;
+      if (!response.ok) {
+        try {
+          const errorPayload: unknown = await response.clone().json();
+          if (errorPayload && typeof errorPayload === 'object' && !Array.isArray(errorPayload)) {
+            const body = errorPayload as Record<string, unknown>;
+            apiStatus = typeof body.status === 'string' || typeof body.status === 'number'
+              ? sanitizeGovernmentDiagnosticText(String(body.status))
+              : null;
+            apiMessage = typeof body.message === 'string' || typeof body.message === 'number'
+              ? sanitizeGovernmentDiagnosticText(String(body.message))
+              : null;
+          }
+        } catch {
+          // Keep the HTTP status diagnostic when the error body is not JSON.
+        }
+        throw new Error(`Upstream returned HTTP ${response.status}`);
+      }
       const payload: unknown = await response.json();
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Upstream returned malformed JSON');
       const parsed = payload as Payload;
+      const body = payload as Record<string, unknown>;
+      apiStatus = typeof body.status === 'string' || typeof body.status === 'number'
+        ? sanitizeGovernmentDiagnosticText(String(body.status))
+        : null;
+      apiMessage = typeof body.message === 'string' || typeof body.message === 'number'
+        ? sanitizeGovernmentDiagnosticText(String(body.message))
+        : null;
       if (!Array.isArray(parsed.records)) throw new Error('Upstream response has no records array');
-      return { total: readTotal(parsed.total), records: parsed.records };
+      totalRecords = readTotal(parsed.total);
+      returnedRecordCount = parsed.records.length;
+      console.info('[market-diagnostics] government API request', {
+        resourceId: env.government.resourceId,
+        apiHostname: apiBase.hostname,
+        endpointPath: sanitizeGovernmentDiagnosticText(`${apiBase.pathname.replace(/\/+$/, '')}/${encodeURIComponent(env.government.resourceId)}`),
+        apiKeyConfigured: Boolean(env.government.apiKey),
+        filters,
+        offset,
+        limit,
+        httpStatus,
+        requestDurationMs: Date.now() - startedAt,
+        apiStatus,
+        apiMessage,
+        totalRecords,
+        returnedRecordCount,
+        rejectedDuringNormalization: 0,
+        result: 'success',
+      });
+      return { total: totalRecords, records: parsed.records };
     } catch (error) {
-      if (!(error instanceof Error && error.message.startsWith('Upstream returned HTTP'))) {
-        console.log('Upstream HTTP status: no response | response time:', `${Date.now() - startedAt}ms`);
-      }
-      const errorClass = error instanceof Error && error.name === 'TimeoutError'
-        ? 'timeout'
-        : error instanceof Error && error.message.startsWith('Upstream returned HTTP')
-          ? error.message
-          : error instanceof Error && (error.message.includes('malformed') || error.message.includes('Invalid total'))
-            ? 'malformed or invalid response'
-            : error instanceof Error && error.message.includes('records array')
-              ? 'invalid response shape'
-              : 'connection or response error';
-      console.error('Sanitized upstream error:', errorClass);
-      throw new Error(errorClass);
+      const safeError = governmentDiagnosticError(error);
+      console.error('[market-diagnostics] government API request failed', {
+        resourceId: env.government.resourceId,
+        apiHostname: apiBase.hostname,
+        endpointPath: sanitizeGovernmentDiagnosticText(`${apiBase.pathname.replace(/\/+$/, '')}/${encodeURIComponent(env.government.resourceId)}`),
+        apiKeyConfigured: Boolean(env.government.apiKey),
+        filters,
+        offset,
+        limit,
+        httpStatus,
+        requestDurationMs: Date.now() - startedAt,
+        apiStatus,
+        apiMessage,
+        totalRecords,
+        returnedRecordCount,
+        rejectedDuringNormalization: 0,
+        ...safeError,
+      });
+      throw new Error(safeError.transportCategory ?? 'upstream request failed', { cause: error });
     }
   };
 
@@ -97,7 +157,6 @@ async function main() {
 }
 
 main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : 'diagnostic failed';
-  console.error('Market diagnostics failed:', message);
+  console.error('Market diagnostics failed:', governmentDiagnosticError(error));
   process.exitCode = 1;
 });

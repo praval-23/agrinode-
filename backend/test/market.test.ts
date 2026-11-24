@@ -192,6 +192,70 @@ test('classifies timeout, HTTP, and connection failures without exposing request
     (error: unknown) => error instanceof GovernmentMarketDataError && error.kind === 'request' && !error.message.includes('test-api-key'));
 });
 
+test('logs sanitized upstream diagnostics for nested DNS failures', async () => {
+  useApiKey();
+  const entries: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => { entries.push(args); };
+  globalThis.fetch = async () => {
+    throw Object.assign(new Error('request failed https://api.data.gov.in/resource?id=private&api-key=test-api-key', {
+      cause: Object.assign(new Error('lookup failed'), { code: 'ENOTFOUND' }),
+    }), { code: 'EAI_AGAIN' });
+  };
+
+  try {
+    await assert.rejects(() => provider.getPrices({
+      state: 'Karnataka',
+      district: 'Bengaluru',
+      commodity: 'Tomato',
+    }, { scope: 'district' }), (error: unknown) => error instanceof GovernmentMarketDataError && error.kind === 'request');
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  const serialized = JSON.stringify(entries);
+  assert.equal(serialized.includes('test-api-key'), false);
+  assert.match(serialized, /"apiKeyConfigured":true/);
+  assert.match(serialized, /"apiHostname":"api\.data\.gov\.in"/);
+  assert.match(serialized, /"filters":\{"State":"Karnataka","District":"Bangalore","Commodity":"Tomato"\}/);
+  assert.match(serialized, /"offset":0/);
+  assert.match(serialized, /"limit":1/);
+  assert.match(serialized, /"transportCategory":"dns"/);
+  assert.match(serialized, /"errorCode":null/);
+  assert.match(serialized, /"code":"EAI_AGAIN"/);
+  assert.match(serialized, /"httpStatus":null/);
+  assert.match(serialized, /"requestDurationMs":\d+/);
+});
+
+test('logs the number of records rejected during normalization', async () => {
+  useApiKey();
+  const entries: unknown[][] = [];
+  const originalConsoleInfo = console.info;
+  console.info = (...args: unknown[]) => { entries.push(args); };
+  globalThis.fetch = async (_input, init) => {
+    const url = new URL(String(_input));
+    if (url.searchParams.get('limit') === '1') return response([], 2);
+    return response([
+      governmentRecord({ Modal_Price: '-1' }),
+      governmentRecord({ Commodity: 'Onion' }),
+    ], 2);
+  };
+
+  try {
+    const prices = await provider.getPrices({ state: 'Karnataka' }, { scope: 'state' });
+    assert.equal(prices.length, 1);
+  } finally {
+    console.info = originalConsoleInfo;
+  }
+
+  const resultLog = entries.find((entry) => entry[0] === '[market] government provider result');
+  assert.ok(resultLog);
+  const details = resultLog[1] as Record<string, unknown>;
+  assert.equal(details.returnedRecordCount, 2);
+  assert.equal(details.normalizedRecordCount, 1);
+  assert.equal(details.rejectedDuringNormalization, 1);
+});
+
 test('shares concurrent upstream requests and maps historical Bangalore districts for matching', async () => {
   useApiKey();
   let callCount = 0;
